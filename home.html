@@ -1,0 +1,244 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Chat App — Home</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="app-shell">
+    <header class="topbar">
+      <div class="left">
+        <button id="logoutBtn" class="link">Logout</button>
+      </div>
+      <div class="center"><h2>Messages</h2></div>
+      <div class="right">
+        <img id="myAvatarSmall" class="avatar-sm" src="" />
+      </div>
+    </header>
+
+    <nav class="tabs">
+      <button class="tab active" data-tab="home">🏠 Home</button>
+      <button class="tab" data-tab="friends">👥 Friends</button>
+      <button class="tab" data-tab="chats">💬 Chats</button>
+    </nav>
+
+    <main class="content">
+      <section id="tab-home" class="tabpane">
+        <h3>Welcome</h3>
+        <div id="profileBox" class="card">
+          <div>
+            <img id="myAvatar" class="avatar-lg" src="" />
+          </div>
+          <div>
+            <div id="myName" class="big"></div>
+            <div id="myEmail" class="muted"></div>
+            <label class="muted">Change avatar:</label>
+            <input type="file" id="avatarInput" accept="image/*" />
+          </div>
+        </div>
+      </section>
+
+      <section id="tab-friends" class="tabpane" style="display:none;">
+        <div class="card">
+          <h4>Find by username</h4>
+          <input id="findUsername" placeholder="Enter username to add" />
+          <button id="addFriendBtn" class="primary">Send Friend Request</button>
+          <div id="friendMsg" class="muted"></div>
+        </div>
+
+        <div class="card">
+          <h4>Friend Requests</h4>
+          <div id="incomingRequests"></div>
+        </div>
+
+        <div class="card">
+          <h4>Your Friends</h4>
+          <div id="friendsList"></div>
+        </div>
+      </section>
+
+      <section id="tab-chats" class="tabpane" style="display:none;">
+        <div class="card">
+          <h4>Chats</h4>
+          <div id="chatsList"></div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="botbar">
+      <small class="muted">Demo chat — all realtime via Firebase</small>
+    </footer>
+  </div>
+
+  <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-database-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-storage-compat.js"></script>
+
+  <script src="app.js"></script>
+  <script>
+    // Require login then render
+    authOnLoad(async function(user){
+      if(!user) { window.location.href = 'index.html'; return; }
+      // render profile
+      const profile = await dbRefOnce(`/users/${user.uid}`);
+      document.getElementById('myName').textContent = profile.name || '';
+      document.getElementById('myEmail').textContent = profile.email || '';
+      setAvatarEls(profile.avatarUrl || '');
+
+      // avatar upload
+      document.getElementById('avatarInput').addEventListener('change', async (e)=>{
+        const f = e.target.files[0]; if(!f) return;
+        const url = await uploadAvatar(user.uid,f);
+        await setDb(`/users/${user.uid}/avatarUrl`, url);
+        setAvatarEls(url);
+      });
+
+      // logout
+      document.getElementById('logoutBtn').addEventListener('click', async ()=>{ await signOut(); window.location.href='index.html'; });
+
+      // tabs
+      document.querySelectorAll('.tab').forEach(b=>{
+        b.addEventListener('click', ()=>{ document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active')); b.classList.add('active');
+          document.querySelectorAll('.tabpane').forEach(p=>p.style.display='none'); document.getElementById('tab-'+b.dataset.tab).style.display='block';
+        });
+      });
+
+      // friends: send request
+      document.getElementById('addFriendBtn').addEventListener('click', async ()=>{
+        const name = document.getElementById('findUsername').value.trim();
+        const msg = document.getElementById('friendMsg');
+        if(!name){ msg.textContent='Enter username'; return; }
+        const toUid = await dbRefOnce(`/usernames/${name}`);
+        if(!toUid){ msg.textContent='No user with that username'; return; }
+        if(toUid === user.uid){ msg.textContent='Cannot add yourself'; return; }
+        // push request: /friendRequests/{toUid}/{fromUid} = {fromName, fromUid, at}
+        const me = await dbRefOnce(`/users/${user.uid}`);
+        await setDb(`/friendRequests/${toUid}/${user.uid}`, { fromUid: user.uid, fromName: me.name, at: Date.now() });
+        msg.textContent='Friend request sent';
+      });
+
+      // show incoming friend requests (real-time)
+      onDbChildAdded(`/friendRequests/${user.uid}`, (snap)=>{
+        renderIncomingRequests();
+      });
+      onDbChildRemoved(`/friendRequests/${user.uid}`, (snap)=>{
+        renderIncomingRequests();
+      });
+      renderIncomingRequests();
+
+      // render friends list
+      onDbValue(`/users/${user.uid}/friends`, ()=> renderFriends());
+      renderFriends();
+
+      // render chats list
+      onDbValue(`/users/${user.uid}/chats`, ()=> renderChats());
+      renderChats();
+    });
+
+    function setAvatarEls(url){
+      const small = document.getElementById('myAvatarSmall');
+      const big = document.getElementById('myAvatar');
+      small.src = url || 'https://via.placeholder.com/40?text=U';
+      big.src = url || 'https://via.placeholder.com/80?text=U';
+    }
+
+    async function renderIncomingRequests(){
+      const user = firebase.auth().currentUser;
+      const container = document.getElementById('incomingRequests');
+      container.innerHTML = 'Loading...';
+      const requests = await dbRefOnce(`/friendRequests/${user.uid}`) || {};
+      container.innerHTML = '';
+      for(const fromUid in requests){
+        const r = requests[fromUid];
+        const el = document.createElement('div');
+        el.className='requestRow';
+        el.innerHTML = `<div><strong>${r.fromName}</strong></div><div><button class='primary accept' data-uid='${r.fromUid}'>Accept</button> <button class='secondary reject' data-uid='${r.fromUid}'>Reject</button></div>`;
+        container.appendChild(el);
+      }
+      container.querySelectorAll('.accept').forEach(b=>{
+        b.addEventListener('click', async ()=>{
+          const fromUid = b.dataset.uid;
+          const user = firebase.auth().currentUser;
+          const me = await dbRefOnce(`/users/${user.uid}`);
+          const other = await dbRefOnce(`/users/${fromUid}`);
+
+          // add each other to friends
+          await setDb(`/users/${user.uid}/friends/${fromUid}`, { uid: fromUid, name: other.name, avatarUrl: other.avatarUrl||'' });
+          await setDb(`/users/${fromUid}/friends/${user.uid}`, { uid: user.uid, name: me.name, avatarUrl: me.avatarUrl||'' });
+
+          // remove request
+          await removeDb(`/friendRequests/${user.uid}/${fromUid}`);
+
+          // create empty chat record and attach to both sides
+          const chatId = createChatId(user.uid, fromUid);
+          await setDb(`/chats/${chatId}`, { createdAt: Date.now(), participants: { [user.uid]:true, [fromUid]:true }});
+          await setDb(`/users/${user.uid}/chats/${chatId}`, true);
+          await setDb(`/users/${fromUid}/chats/${chatId}`, true);
+
+          renderIncomingRequests(); renderFriends(); renderChats();
+        });
+      });
+      container.querySelectorAll('.reject').forEach(b=>{
+        b.addEventListener('click', async ()=>{
+          const fromUid = b.dataset.uid;
+          const user = firebase.auth().currentUser;
+          await removeDb(`/friendRequests/${user.uid}/${fromUid}`);
+          renderIncomingRequests();
+        });
+      });
+      if(!Object.keys(requests).length) container.innerHTML = '<div class="muted">No requests</div>';
+    }
+
+    async function renderFriends(){
+      const user = firebase.auth().currentUser;
+      const list = await dbRefOnce(`/users/${user.uid}/friends`) || {};
+      const container = document.getElementById('friendsList');
+      container.innerHTML = '';
+      for(const k in list){
+        const f = list[k];
+        const row = document.createElement('div'); row.className='friendRow';
+        row.innerHTML = `<img src="${f.avatarUrl || 'https://via.placeholder.com/40'}" class="avatar-sm" /><div><div class="name">${f.name}</div><div class="muted">Chat</div></div><div><button class="primary openChat" data-uid="${k}">Open</button></div>`;
+        container.appendChild(row);
+      }
+      container.querySelectorAll('.openChat').forEach(b=> b.addEventListener('click', ()=>{
+        const to = b.dataset.uid; const me = firebase.auth().currentUser;
+        const chatId = createChatId(me.uid, to);
+        window.location.href = `chat.html?chat=${chatId}&to=${to}`;
+      }));
+      if(!Object.keys(list).length) container.innerHTML = '<div class="muted">No friends yet</div>';
+    }
+
+    async function renderChats(){
+      const user = firebase.auth().currentUser;
+      const list = await dbRefOnce(`/users/${user.uid}/chats`) || {};
+      const container = document.getElementById('chatsList');
+      container.innerHTML = '';
+      for(const chatId in list){
+        // show last message preview
+        const msgs = await dbRefOnce(`/messages/${chatId}`) || {};
+        // get latest
+        let last = null;
+        Object.values(msgs).forEach(m=>{ if(!last || m.t > last.t) last = m; });
+        const preview = last ? (last.text ? last.text.slice(0,40) : (last.image? '📷 Image':'')) : 'No messages';
+        // find other participant
+        const chatMeta = await dbRefOnce(`/chats/${chatId}`);
+        const me = firebase.auth().currentUser.uid;
+        const otherUid = Object.keys(chatMeta.participants || {}).filter(x=> x !== me)[0];
+        const otherProfile = otherUid ? (await dbRefOnce(`/users/${otherUid}`)) : {name:'Group', avatarUrl:''};
+        const row = document.createElement('div'); row.className='chatRow';
+        row.innerHTML = `<img src="${otherProfile.avatarUrl||'https://via.placeholder.com/40'}" class="avatar-sm" /><div><div class="name">${otherProfile.name}</div><div class="muted">${preview}</div></div><div><button class="primary openChat" data-id="${chatId}" data-to="${otherUid}">Open</button></div>`;
+        container.appendChild(row);
+      }
+      container.querySelectorAll('.openChat').forEach(b=> b.addEventListener('click', ()=>{
+        const chatId = b.dataset.id;
+        const to = b.dataset.to;
+        window.location.href = `chat.html?chat=${chatId}&to=${to}`;
+      }));
+      if(!Object.keys(list).length) container.innerHTML = '<div class="muted">No chats yet</div>';
+    }
+  </script>
+</body>
+</html>
