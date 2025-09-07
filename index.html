@@ -1,0 +1,104 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Chat App — Login / Signup</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="center-card">
+    <h1>Register / Login</h1>
+
+    <div id="auth-forms">
+      <div class="form-row">
+        <label>Name</label>
+        <input id="name" placeholder="Full name" />
+      </div>
+
+      <div class="form-row">
+        <label>Username</label>
+        <input id="username" placeholder="Username (unique)" />
+      </div>
+
+      <div class="form-row">
+        <label>Email</label>
+        <input id="email" placeholder="Email" />
+      </div>
+
+      <div class="form-row">
+        <label>Password</label>
+        <input id="password" type="password" placeholder="Password" />
+      </div>
+
+      <div class="form-row" style="display:flex;gap:8px;">
+        <button id="signupBtn" class="primary">Sign up</button>
+        <button id="loginBtn" class="secondary">Login</button>
+      </div>
+
+      <div id="authMsg" class="muted"></div>
+    </div>
+  </div>
+
+  <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-database-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-storage-compat.js"></script>
+
+  <script src="app.js"></script>
+  <script>
+    // Page-specific startup
+    authOnLoad(function(user){
+      // if already logged in redirect
+      if(user) {
+        window.location.href = 'home.html';
+      }
+    });
+
+    // signup
+    document.getElementById('signupBtn').addEventListener('click', async ()=>{
+      const name = document.getElementById('name').value.trim();
+      const username = document.getElementById('username').value.trim();
+      const email = document.getElementById('email').value.trim();
+      const password = document.getElementById('password').value;
+      const msg = document.getElementById('authMsg');
+
+      if(!name || !username || !email || !password){ msg.textContent='Please fill all fields'; return; }
+      msg.textContent='Creating account...';
+
+      try{
+        // ensure username not taken
+        const taken = await dbRefOnce(`/usernames/${username}`);
+        if(taken){ msg.textContent='Username taken'; return; }
+
+        const user = await createUserWithEmail(email,password);
+        const uid = user.uid;
+        // save profile
+        await setDb(`/users/${uid}`, {
+          name, username, email, avatarUrl: '', createdAt: Date.now()
+        });
+        // reserve username -> uid
+        await setDb(`/usernames/${username}`, uid);
+
+        msg.textContent='Account created — redirecting...';
+        window.location.href = 'home.html';
+      }catch(err){
+        msg.textContent = err.message || ''+err;
+      }
+    });
+
+    // login
+    document.getElementById('loginBtn').addEventListener('click', async ()=>{
+      const email = document.getElementById('email').value.trim();
+      const password = document.getElementById('password').value;
+      const msg = document.getElementById('authMsg');
+      if(!email || !password){ msg.textContent='Provide email & password'; return; }
+      msg.textContent = 'Signing in...';
+      try{
+        await signInWithEmail(email,password);
+        window.location.href = 'home.html';
+      }catch(err){ msg.textContent = err.message || ''+err; }
+    });
+  </script>
+</body>
+</html>
