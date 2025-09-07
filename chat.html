@@ -1,0 +1,99 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Chat Room</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="chat-shell">
+    <header class="chat-head">
+      <button id="backBtn" class="link">← Back</button>
+      <div id="chatTitle">Chat</div>
+      <div><img id="chatToAvatar" class="avatar-sm" src="" /></div>
+    </header>
+
+    <div id="messagesArea" class="messages-area"></div>
+
+    <div class="composer-row">
+      <input id="msgInput" placeholder="Type a message" />
+      <input id="fileAttach" type="file" accept="image/*" style="display:none" />
+      <button id="attachBtn" class="link">📷</button>
+      <button id="sendMsgBtn" class="primary">Send</button>
+    </div>
+  </div>
+
+  <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-database-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-storage-compat.js"></script>
+
+  <script src="app.js"></script>
+  <script>
+    // parse query
+    const params = new URLSearchParams(window.location.search);
+    const chatId = params.get('chat');
+    const toUid = params.get('to');
+
+    authOnLoad(async function(user){
+      if(!user){ window.location.href='index.html'; return; }
+      if(!chatId){ alert('Invalid chat'); window.location.href='home.html'; return; }
+
+      // set title
+      const other = await dbRefOnce(`/users/${toUid}`) || {name:'Unknown', avatarUrl:''};
+      document.getElementById('chatTitle').textContent = other.name;
+      document.getElementById('chatToAvatar').src = other.avatarUrl || 'https://via.placeholder.com/40';
+
+      document.getElementById('backBtn').addEventListener('click', ()=> window.location.href='home.html');
+
+      // render existing messages and listen for new
+      const area = document.getElementById('messagesArea');
+      area.innerHTML = '';
+      onDbChildAdded(`/messages/${chatId}`, (snap)=>{
+        const m = snap.val();
+        appendMessage(m);
+      });
+
+      // load all (initial)
+      const all = await dbRefOnce(`/messages/${chatId}`) || {};
+      Object.values(all).sort((a,b)=>a.t-b.t).forEach(appendMessage);
+      area.scrollTop = area.scrollHeight;
+
+      // send message
+      document.getElementById('sendMsgBtn').addEventListener('click', sendMsg);
+      document.getElementById('msgInput').addEventListener('keydown', (e)=>{ if(e.key==='Enter'){ e.preventDefault(); sendMsg(); }});
+
+      // attach
+      document.getElementById('attachBtn').addEventListener('click', ()=> document.getElementById('fileAttach').click());
+      document.getElementById('fileAttach').addEventListener('change', async (e)=>{
+        const f = e.target.files[0]; if(!f) return;
+        const url = await uploadChatImage(chatId, f);
+        await pushMessage(chatId, { from: user.uid, text: null, image: url, t: Date.now() });
+      });
+
+    });
+
+    function appendMessage(m){
+      const area = document.getElementById('messagesArea');
+      const div = document.createElement('div'); div.className = 'msgRow ' + (m.from === (firebase.auth().currentUser && firebase.auth().currentUser.uid) ? 'mine' : 'theirs');
+      const content = document.createElement('div'); content.className='bubble';
+      if(m.image) { const im = document.createElement('img'); im.src = m.image; im.className='msgImg'; content.appendChild(im); }
+      if(m.text) { const t = document.createElement('div'); t.textContent = m.text; content.appendChild(t); }
+      const time = document.createElement('div'); time.className='meta-time'; time.textContent = timeAgo(m.t);
+      content.appendChild(time);
+      div.appendChild(content);
+      area.appendChild(div);
+      area.scrollTop = area.scrollHeight;
+    }
+
+    async function sendMsg(){
+      const val = document.getElementById('msgInput').value.trim();
+      if(!val) return;
+      const user = firebase.auth().currentUser;
+      await pushMessage(chatId, { from: user.uid, text: val, image: null, t: Date.now() });
+      document.getElementById('msgInput').value = '';
+    }
+  </script>
+</body>
+</html>
